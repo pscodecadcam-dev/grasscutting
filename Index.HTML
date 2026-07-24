@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ระบบรายงาน: งานรักษาความสะอาด (ตัดหญ้า)</title>
+    
+    <!-- นำเข้าเครื่องมือตกแต่งและไอคอนผ่านระบบออนไลน์ (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- แผนที่ Leaflet สำหรับปักหมุดตำแหน่ง -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- เครื่องมือวาดขอบเขตและวัดพื้นที่บนแผนที่ -->
+    <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.13.0/dist/leaflet-geoman.css" />
+    <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.13.0/dist/leaflet-geoman.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+    <!-- ไลบรารีสำหรับสร้างและส่งออกไฟล์เอกสารรายงาน PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        /* เลือกใช้ฟอนต์ Prompt เพื่อความโมเดิร์นสวยงาม */
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@200;300;400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Prompt', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #map {
+            height: 360px;
+            z-index: 10;
+        }
+        /* รูปพื้นหลังพรีเมียม */
+        .bg-opacity-image {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background-image: url('https://images.unsplash.com/photo-1617957718614-8c23f060c2d0?auto=format&fit=crop&w=1200&q=80');
+            background-size: cover;
+            background-position: center;
+            opacity: 0.4;
+            filter: grayscale(15%);
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .leaflet-control-layers {
+            border: none !important;
+            border-radius: 8px !important;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1) !important;
+            font-family: 'Prompt', sans-serif !important;
+            font-size: 11px !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen pb-24 relative">
+
+    <div class="bg-opacity-image"></div>
+
+    <header class="bg-white/90 backdrop-blur-md text-slate-800 shadow-sm sticky top-0 z-50 border-b border-emerald-100">
+        <div class="max-w-md mx-auto px-5 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="p-2 bg-emerald-500 rounded-xl text-white shadow-sm shadow-emerald-200">
+                    <i data-lucide="sparkles" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h2 class="font-semibold text-lg text-slate-800 tracking-tight">รายงานงานรักษาความสะอาด (ตัดหญ้า)</h2>
+                    <p class="text-[11px] text-cyan-600 font-medium">กองสาธารณสุขและสิ่งแวดล้อม</p>
+                </div>
+            </div>
+            <span id="connection-status" class="bg-emerald-50 text-[11px] font-medium text-emerald-700 px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-emerald-200">
+                <span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                <span>ออนไลน์</span>
+            </span>
+        </div>
+    </header>
+
+    <main class="max-w-md mx-auto px-4 pt-5">
+        
+        <!-- แถบสลับเมนู -->
+        <div class="flex bg-white/80 backdrop-blur-sm p-1 rounded-xl shadow-sm mb-5 border border-slate-200/60">
+            <button onclick="switchTab('report')" id="tab-btn-report" class="flex-1 py-2.5 text-center text-xs font-semibold rounded-lg transition-all flex justify-center items-center gap-2 bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-sm">
+                <i data-lucide="pen-tool" class="w-3.5 h-3.5"></i> บันทึกส่งงาน
+            </button>
+            <button onclick="switchTab('history')" id="tab-btn-history" class="flex-1 py-2.5 text-center text-xs font-semibold rounded-lg transition-all text-slate-500 hover:text-slate-800 flex justify-center items-center gap-2">
+                <i data-lucide="archive" class="w-3.5 h-3.5"></i> ประวัติผลงาน & PDF
+            </button>
+        </div>
+
+        <!-- ================= แท็บกรอกข้อมูล (REPORT FORM) ================= -->
+        <section id="tab-report" class="space-y-4">
+            <div class="bg-white/95 backdrop-blur-md p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-5">
+                
+                <div class="border-b pb-3 border-slate-100">
+                    <h2 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <i data-lucide="clipboard-check" class="text-emerald-500 w-5 h-5"></i> บันทึกข้อมูลประจำวัน
+                    </h2>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1.5 tracking-wide">ชื่อ-นามสกุล พนักงาน</label>
+                    <div class="relative">
+                        <select id="worker-name" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 appearance-none transition-all">
+                            <option value="">-- กรุณาระบุชื่อของคุณ --</option>
+                            <option value="ผลงานกลุ่ม">ผลงานกลุ่ม</option>
+                            <option value="นางพรมศรี ว่องดี">นางพรมศรี ว่องดี</option>
+                            <option value="นายทินกร ว่องดี">นายทินกร ว่องดี</option>
+                            <option value="นายธงชัย จันทร์เมือง">นายธงชัย จันทร์เมือง</option>
+                            <option value="นายชัยณรงค์ โปทา">นายชัยณรงค์ โปทา</option>
+                            <option value="นายกำธร โสภา">นายกำธร โสภา</option>
+                            <option value="นายไพรบูรณ์ ศรีคำม่วน">นายไพรบูรณ์ ศรีคำม่วน</option>
+                        </select>
+                        <i data-lucide="chevron-down" class="w-4 h-4 text-slate-400 absolute right-3 top-3.5 pointer-events-none"></i>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1.5 tracking-wide">ภาพถ่ายขณะปฏิบัติงาน</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button type="button" onclick="triggerCamera()" class="flex flex-col items-center justify-center border border-dashed border-slate-300 hover:border-cyan-500 rounded-xl p-4 bg-slate-50/50 transition-all text-slate-500 hover:text-cyan-600 h-28">
+                            <i data-lucide="camera" class="w-6 h-6 mb-1 text-slate-400"></i>
+                            <span class="text-[11px] font-medium">กดเปิดกล้อง</span>
+                        </button>
+                        <div class="relative border border-slate-200 rounded-xl overflow-hidden bg-slate-50 flex items-center justify-center h-28">
+                            <img id="photo-preview" class="hidden w-full h-full object-cover" src="" alt="ภาพถ่าย">
+                            <div id="photo-placeholder" class="text-slate-400 text-[11px] flex flex-col items-center">
+                                <i data-lucide="image" class="w-5 h-5 mb-1 text-slate-300"></i> รอรูปภาพ
+                            </div>
+                            <button id="delete-photo-btn" onclick="clearPhoto()" class="hidden absolute top-1 right-1 bg-rose-500 text-white p-1 rounded-full hover:bg-rose-600">
+                                <i data-lucide="x" class="w-3 h-3"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <input type="file" id="camera-input" accept="image/*" capture="environment" class="hidden" onchange="previewImage(this)">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1.5 tracking-wide">ตำแหน่งดาวเทียม</label>
+                    <button type="button" onclick="getCurrentLocation()" class="w-full bg-cyan-50 hover:bg-cyan-100/80 text-cyan-700 font-medium px-4 py-3 rounded-xl border border-cyan-100 transition-all text-xs flex items-center justify-center gap-2">
+                        <i data-lucide="map-pin" class="w-3.5 h-3.5 text-cyan-600"></i>
+                        <span id="gps-btn-text">"กดปุ่ม" เพื่อดึงพิกัดตำแหน่ง (GPS) อัตโนมัติ</span>
+                    </button>
+                    <div class="mt-2 text-[11px] text-slate-500 bg-slate-100/80 p-2 rounded-lg flex justify-between items-center">
+                        <span>พิกัด: <strong id="gps-coords" class="font-Prompt">ยังไม่มีข้อมูลพิกัด</strong></span>
+                        <span id="gps-accuracy" class="text-slate-400 text-[10px]"></span>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1.5 tracking-wide">วาดขอบเขตพื้นที่ที่ตัดหญ้าแล้วเสร็จ (ระบบคำนวณพื้นที่อัตโนมัติ)</label>
+                    <div id="map" class="rounded-xl border border-slate-200 overflow-hidden shadow-inner bg-slate-100"></div>
+                    
+                    <div class="mt-2 bg-gradient-to-r from-slate-900 to-slate-800 p-3 rounded-xl flex items-center justify-between text-white">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="layers" class="w-4 h-4 text-cyan-400"></i>
+                            <span class="text-xs font-light tracking-wide text-slate-300">คำนวณพื้นที่ได้:</span>
+                        </div>
+                        <span class="text-base font-regular text-cyan-300"><span id="measured-area" class="font-Prompt">0</span> ตร.ม.</span>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1.5 tracking-wide">บันทึกเพิ่มเติม / รายงานปัญหา</label>
+                    <textarea id="notes" rows="2" placeholder="ระบุข้อมูลเพิ่มเติม เช่น สถานที่ หรืออุปสรรคต่อการทำงาน" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"></textarea>
+                </div>
+
+                <button type="button" onclick="submitReport()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3.5 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-sm tracking-wide">
+                    <i data-lucide="check-circle" class="w-4 h-4"></i> บันทึก (ส่งรายงาน)
+                </button>
+            </div>
+        </section>
+
+        <!-- ================= แท็บดูรายงานและพิมพ์ PDF (HISTORY & PDF) ================= -->
+        <section id="tab-history" class="space-y-4 hidden">
+            <div class="bg-white/95 backdrop-blur-md p-4 rounded-xl shadow-sm border border-slate-200/80 space-y-3">
+                <div class="flex justify-between items-center">
+                    <h3 class="font-semibold text-slate-700 text-xs flex items-center gap-1.5">
+                        <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5 text-cyan-600"></i>
+                        ตัวกรอง และ ออกรายงาน PDF
+                    </h3>
+                    <button onclick="clearFilters()" class="text-[10px] text-slate-400 hover:text-rose-500 underline flex items-center gap-1">
+                        <i data-lucide="rotate-ccw" class="w-3 h-3"></i> ล้างค่า
+                    </button>
+                </div>
+                
+                <!-- ตัวเลือกผู้ใช้งาน -->
+                <select id="filter-worker" onchange="renderHistory()" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-cyan-500">
+                    <option value="">-- รายชื่อพนักงานจ้างเหมาบริการตัดหญ้า --</option>
+                    <option value="ผลงานกลุ่ม">ผลงานกลุ่ม</option>
+                    <option value="นางพรมศรี ว่องดี">นางพรมศรี ว่องดี</option>
+                    <option value="นายทินกร ว่องดี">นายทินกร ว่องดี</option>
+                    <option value="นายธงชัย จันทร์เมือง">นายธงชัย จันทร์เมือง</option>
+                    <option value="นายชัยณรงค์ โปทา">นายชัยณรงค์ โปทา</option>
+                    <option value="นายกำธร โสภา">นายกำธร โสภา</option>
+                    <option value="นายไพรบูรณ์ ศรีคำม่วน">นายไพรบูรณ์ ศรีคำม่วน</option>
+                </select>
+
+                <!-- เพิ่มตัวเลือก วันที่เริ่มต้น - วันที่สิ้นสุด -->
+                <div class="grid grid-cols-2 gap-2 mt-2">
+                    <div>
+                        <label class="block text-[10px] text-slate-500 mb-1">ตั้งแต่วันที่</label>
+                        <input type="date" id="filter-start-date" onchange="renderHistory()" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] text-slate-800 focus:outline-none focus:border-cyan-500">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] text-slate-500 mb-1">ถึงวันที่</label>
+                        <input type="date" id="filter-end-date" onchange="renderHistory()" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] text-slate-800 focus:outline-none focus:border-cyan-500">
+                    </div>
+                </div>
+
+                <button onclick="generateSinglePDFReport()" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-medium py-2.5 px-4 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-all mt-2">
+                    <i data-lucide="file-text" class="w-4 h-4"></i>
+                    พิมพ์รายงานสรุปผลงาน (PDF)
+                </button>
+            </div>
+
+            <div class="space-y-3 pb-8" id="history-list"></div>
+        </section>
+
+    </main>
+
+    <!-- Footer และ Navbar ด้านล่าง (คงเดิม) -->
+    <footer class="max-w-md mx-auto text-center py-6 text-slate-500 text-xs tracking-wide">
+        <p class="font-light">© 2026|Web App: Grass Cutting</p>
+        <p class="text-[10px] text-slate-400 mt-1 font-medium">Develop By: <span class="text-cyan-600 font-semibold">Prasert Polla</span></p>
+    </footer>
+
+    <!-- แม่แบบโครงสร้างเอกสารรายงานสรุป (พิมพ์ PDF) -->
+    <div id="pdf-container-outer" class="hidden">
+        <div id="pdf-report-content" class="bg-white p-10 max-w-[210mm] mx-auto text-slate-800" style="font-family: 'Prompt', sans-serif;">
+            <div class="text-center border-b-2 border-slate-800 pb-4 mb-6">
+                <h2 class="text-xl font-regular tracking-tight">Grass Cutting List</h2>
+                <p class="text-sm text-slate-500 mt-0.7">งานรักษาความสะอาด (ตัดหญ้า) ฝ่ายบริหารงานสาธารณสุข กองสาธารณสุขและสิ่งแวดล้อม</p>
+                <p class="text-xs text-slate-600 mt-0.5 font-medium"><span id="pdf-report-date"></span></p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-lg mb-6 border border-slate-200 text-xs">
+                <div>
+                    <p class="text-slate-500">ชื่อผู้รับจ้าง:</p>
+                    <p class="font-bold text-sm text-slate-600" id="pdf-worker-name">-</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-slate-500">จำนวนงานทั้งหมด:</p>
+                    <p class="font-bold text-sm text-emerald-500" id="pdf-total-tasks">0 รายการ</p>
+                </div>
+                <div>
+                    <p class="text-slate-500">งาน/ฝ่าย:</p>
+                    <p class="font-medium text-slate-700">งานรักษาความสะอาด ฝ่ายบริหารงานสาธารณสุขฯ</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-slate-500">พื้นที่ปฏิบัติงานรวม:</p>
+                    <p class="font-bold text-sm text-cyan-600"><span id="pdf-total-area">0</span> ตร.ม.</p>
+                </div>
+            </div>
+
+            <div class="space-y-4 mb-8">
+                <table class="w-full text-left border-collapse text-[11px]">
+                    <thead>
+                        <tr class="bg-slate-100 text-slate-600 border-b border-slate-300">
+                            <th class="p-2 w-10 text-center">ที่</th>
+                            <th class="p-2 w-24">วัน/เวลา</th>
+                            <th class="p-2">พิกัดดาวเทียม</th>
+                            <th class="p-2 text-right w-20">ตร.ม.</th>
+                            <th class="p-2 w-28">หมายเหตุ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pdf-table-body" class="divide-y divide-slate-200"></tbody>
+                </table>
+            </div>
+
+            <div>
+                <h3 class="font-bold text-xs text-slate-700 border-b border-slate-200 pb-1 mb-3">ภาพถ่ายแนบรายงาน</h3>
+                <div id="pdf-images-grid" class="grid grid-cols-3 gap-2"></div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-8 text-center text-xs pt-12 mt-12 border-t border-dashed border-slate-300">
+                <div>
+                    <p class="mb-12 text-slate-500">ผู้รายงานผลงาน</p>
+                    <div class="w-40 mx-auto border-b border-slate-400"></div>
+                    <p class="mt-2 font-medium" id="pdf-sig-worker">-</p>
+                    <p class="text-[10px] text-slate-400">ผู้รับจ้าง</p>
+                </div>
+                <div>
+                    <p class="mb-12 text-slate-500">ผู้ควบคุมสัญญา</p>
+                    <div class="w-40 mx-auto border-b border-slate-400"></div>
+                    <p class="mt-2">(นายประเสริฐ พลหล้า)</p>
+                    <p class="text-[10px] text-slate-400">นักวิชาการสุขาภิบาล</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="custom-toast" class="fixed bottom-24 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md text-white py-2.5 px-5 rounded-xl shadow-lg z-[9999] text-xs hidden flex items-center gap-2 transition-all duration-300">
+        <span id="toast-message">บันทึกข้อมูลเรียบร้อย</span>
+    </div>
+
+    <nav class="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 shadow-lg z-40 max-w-md mx-auto flex justify-around py-3">
+        <button onclick="switchTab('report')" class="flex flex-col items-center gap-1 text-emerald-600 focus:outline-none">
+            <i data-lucide="pen-tool" class="w-4 h-4"></i>
+            <span class="text-[12px] font-medium">บันทึกผลงาน</span>
+        </button>
+        <button onclick="switchTab('history')" class="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-600 focus:outline-none">
+            <i data-lucide="archive" class="w-4 h-4"></i>
+            <span class="text-[12px] font-medium">ดูรายงานประวัติผลงาน</span>
+        </button>
+    </nav>
+
+    <!-- ส่วนควบคุมการทำงาน JavaScript -->
+    <script>
+        const CONFIG = {
+            useRealBackend: true,
+            gasUrl: "https://script.google.com/macros/s/AKfycbwcm0eQig5lbGnuy8c9pdhvPVIBSXk0p5ceey8pqiWx-Om12EomrVq9tUzpharHne435A/exec"
+        };
+
+        let map, drawnPolygon;
+        let capturedPhotoBase64 = null;
+        let selectedCoordinates = null;
+        let calculatedArea = 0;
+        let localDatabase = JSON.parse(localStorage.getItem('street_cleaner_db')) || [];
+
+        window.onload = function() {
+            lucide.createIcons();
+            initMap();
+            renderHistory();
+        };
+
+        function switchTab(tabId) {
+            const reportTab = document.getElementById('tab-report');
+            const historyTab = document.getElementById('tab-history');
+            const btnReport = document.getElementById('tab-btn-report');
+            const btnHistory = document.getElementById('tab-btn-history');
+
+            if (tabId === 'report') {
+                reportTab.classList.remove('hidden');
+                historyTab.classList.add('hidden');
+                btnReport.className = "flex-1 py-2.5 text-center text-xs font-semibold rounded-lg transition-all flex justify-center items-center gap-2 bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-sm";
+                btnHistory.className = "flex-1 py-2.5 text-center text-xs font-semibold rounded-lg transition-all text-slate-500 hover:text-slate-800 flex justify-center items-center gap-2";
+                setTimeout(() => { if (map) map.invalidateSize(); }, 200);
+            } else {
+                reportTab.classList.add('hidden');
+                historyTab.classList.remove('hidden');
+                btnReport.className = "flex-1 py-2.5 text-center text-xs font-semibold rounded-lg transition-all text-slate-500 hover:text-slate-800 flex justify-center items-center gap-2";
+                btnHistory.className = "flex-1 py-2.5 text-center text-xs font-semibold rounded-lg transition-all flex justify-center items-center gap-2 bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-sm";
+                renderHistory();
+            }
+        }
+
+        function initMap() {
+            const initialCoords = [17.304074, 102.196292]; 
+            map = L.map('map', { center: initialCoords, zoom: 15, zoomControl: false });
+
+            const streetMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
+            const satelliteMap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
+            satelliteMap.addTo(map);
+
+            const baseMaps = { "🛰️ ภาพถ่ายทางอากาศ": satelliteMap, "🗺️ แผนที่ถนนปกติ": streetMap };
+            L.control.layers(baseMaps, null, { position: 'topleft' }).addTo(map);
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(function(pos) {
+                    map.setView([pos.coords.latitude, pos.coords.longitude], 18);
+                });
+            }
+
+            map.pm.addControls({
+                position: 'topright', drawMarker: false, drawCircleMarker: false, drawPolyline: false,
+                drawRectangle: false, drawCircle: false, drawPolygon: true, editMode: true, removalMode: true
+            });
+
+            map.pm.setPathOptions({ color: '#06b6d4', fillColor: '#06b6d4', fillOpacity: 0.4 });
+
+            map.on('pm:create', function(e) {
+                if (drawnPolygon) map.removeLayer(drawnPolygon);
+                drawnPolygon = e.layer;
+                calculatePolygonArea(drawnPolygon);
+                drawnPolygon.on('pm:update', () => calculatePolygonArea(drawnPolygon));
+            });
+            map.on('pm:remove', function() {
+                drawnPolygon = null; calculatedArea = 0; document.getElementById('measured-area').innerText = '0';
+            });
+        }
+
+        function calculatePolygonArea(layer) {
+            calculatedArea = Math.round(turf.area(layer.toGeoJSON()));
+            document.getElementById('measured-area').innerText = calculatedArea.toLocaleString();
+        }
+
+        function triggerCamera() { document.getElementById('camera-input').click(); }
+
+        function previewImage(input) {
+            const preview = document.getElementById('photo-preview');
+            const placeholder = document.getElementById('photo-placeholder');
+            const deleteBtn = document.getElementById('delete-photo-btn');
+
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.classList.remove('hidden');
+                    placeholder.classList.add('hidden');
+                    deleteBtn.classList.remove('hidden');
+                    compressImage(e.target.result, (compressed) => capturedPhotoBase64 = compressed);
+                }
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        function clearPhoto() {
+            document.getElementById('photo-preview').classList.add('hidden');
+            document.getElementById('photo-preview').src = "";
+            document.getElementById('photo-placeholder').classList.remove('hidden');
+            document.getElementById('delete-photo-btn').classList.add('hidden');
+            document.getElementById('camera-input').value = "";
+            capturedPhotoBase64 = null;
+        }
+
+        function compressImage(base64Str, callback) {
+            const img = new Image();
+            img.src = base64Str;
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                let w = img.width, h = img.height;
+                if (w > 500) { h *= 500 / w; w = 500; }
+                canvas.width = w; canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+                callback(canvas.toDataURL('image/jpeg', 0.6));
+            }
+        }
+
+        function getCurrentLocation() {
+            const btnText = document.getElementById('gps-btn-text');
+            if (!navigator.geolocation) return showToast("🔴 ไม่รองรับ GPS");
+            btnText.innerText = "กำลังค้นหาพิกัด...";
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    selectedCoordinates = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`;
+                    document.getElementById('gps-coords').innerText = selectedCoordinates;
+                    document.getElementById('gps-accuracy').innerText = `คลาดเคลื่อน ±${Math.round(pos.coords.accuracy)} ม.`;
+                    btnText.innerText = "ดึงพิกัด GPS สำเร็จ";
+                    map.setView([pos.coords.latitude, pos.coords.longitude], 18);
+                    L.marker([pos.coords.latitude, pos.coords.longitude]).addTo(map);
+                },
+                (err) => { btnText.innerText = "ดึงพิกัดล้มเหลว"; showToast("🔴 กรุณาเปิด GPS"); },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        }
+
+        function submitReport() {
+            const worker = document.getElementById('worker-name').value;
+            const notes = document.getElementById('notes').value;
+
+            if (!worker) return showToast("⚠️ ระบุชื่อผู้รายงาน");
+            if (!capturedPhotoBase64) return showToast("⚠️ แนบภาพถ่าย");
+            if (!selectedCoordinates) return showToast("⚠️ ดึงพิกัด GPS");
+            if (calculatedArea === 0) return showToast("⚠️ วาดพื้นที่กวาดถนน");
+
+            // เพิ่ม dateISO (YYYY-MM-DD) ลงไปเพื่อช่วยในการค้นหาวันที่ในอนาคตได้ง่ายขึ้น
+            const now = new Date();
+            const dateISO = now.toISOString().split('T')[0];
+
+            const reportData = {
+                id: 'REC-' + Date.now(),
+                timestamp: now.toLocaleString('th-TH'),
+                dateISO: dateISO,
+                worker: worker,
+                photo: capturedPhotoBase64,
+                coordinates: selectedCoordinates,
+                area: calculatedArea,
+                notes: notes || "-"
+            };
+
+            showToast("⏳ กำลังบันทึกเข้าระบบคลาวด์...");
+
+            if (CONFIG.useRealBackend) {
+                fetch(CONFIG.gasUrl, {
+                    method: 'POST', mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(reportData)
+                }).then(() => saveLocalAndReset(reportData)).catch(() => saveLocalAndReset(reportData));
+            } else {
+                setTimeout(() => saveLocalAndReset(reportData), 800);
+            }
+        }
+
+        function saveLocalAndReset(data) {
+            localDatabase.unshift(data);
+            localStorage.setItem('street_cleaner_db', JSON.stringify(localDatabase));
+            showToast("✅ บันทึกสำเร็จ!");
+
+            document.getElementById('notes').value = "";
+            clearPhoto();
+            document.getElementById('gps-coords').innerText = "ยังไม่มีข้อมูล";
+            document.getElementById('gps-accuracy').innerText = "";
+            document.getElementById('gps-btn-text').innerText = "ดึงพิกัดตำแหน่งพิกัด GPS";
+            selectedCoordinates = null; calculatedArea = 0;
+            document.getElementById('measured-area').innerText = '0';
+            if (drawnPolygon) { map.removeLayer(drawnPolygon); drawnPolygon = null; }
+
+            setTimeout(() => switchTab('history'), 1000);
+        }
+
+        function clearFilters() {
+            document.getElementById('filter-worker').value = "";
+            document.getElementById('filter-start-date').value = "";
+            document.getElementById('filter-end-date').value = "";
+            renderHistory();
+        }
+
+        // ==========================================
+        // ฟังก์ชันใหม่: แปลง Timestamp เดิม ให้เป็น YYYY-MM-DD
+        // ==========================================
+        function parseDateForFilter(item) {
+            // ถ้าระบบใหม่มี dateISO แล้วใช้ได้เลย
+            if (item.dateISO) return item.dateISO; 
+            
+            // กรณีเป็นข้อมูลเก่าที่ถูกเซฟไว้ก่อนอัปเดตระบบ
+            if (item.timestamp) {
+                const datePart = item.timestamp.split(' ')[0]; // เช่น "15/5/2567"
+                const parts = datePart.split('/');
+                if (parts.length === 3) {
+                    let day = parts[0].padStart(2, '0');
+                    let month = parts[1].padStart(2, '0');
+                    let year = parseInt(parts[2]);
+                    // แปลงพ.ศ. เป็น ค.ศ. เพื่อเปรียบเทียบกับ input type="date"
+                    if (year > 2500) year -= 543; 
+                    return `${year}-${month}-${day}`;
+                }
+            }
+            return "";
+        }
+
+        // ==========================================
+        // ฟังก์ชันกรองข้อมูลส่วนกลาง
+        // ==========================================
+        function getFilteredData() {
+            const filterWorker = document.getElementById('filter-worker').value;
+            const startDate = document.getElementById('filter-start-date').value; // format: YYYY-MM-DD
+            const endDate = document.getElementById('filter-end-date').value;
+
+            return localDatabase.filter(item => {
+                // 1. กรองด้วยชื่อ (ถ้าเลือก)
+                const matchWorker = filterWorker ? item.worker === filterWorker : true;
+                
+                // 2. กรองด้วยวันที่ (ถ้าเลือก)
+                let matchDate = true;
+                if (startDate || endDate) {
+                    const itemDate = parseDateForFilter(item);
+                    if (itemDate) {
+                        if (startDate && endDate) {
+                            matchDate = itemDate >= startDate && itemDate <= endDate;
+                        } else if (startDate) {
+                            matchDate = itemDate >= startDate;
+                        } else if (endDate) {
+                            matchDate = itemDate <= endDate;
+                        }
+                    } else {
+                        matchDate = false; // ถ้าข้อมูลไม่มีวันที่ให้ตรวจสอบผ่าน ถือว่าไม่ตรงเงื่อนไข
+                    }
+                }
+                
+                return matchWorker && matchDate;
+            });
+        }
+
+        function renderHistory() {
+            const historyList = document.getElementById('history-list');
+            historyList.innerHTML = "";
+
+            const filteredData = getFilteredData();
+
+            if (filteredData.length === 0) {
+                historyList.innerHTML = `
+                    <div class="bg-white/90 backdrop-blur-sm p-8 rounded-xl text-center text-slate-400 border border-slate-200/60 mt-4">
+                        <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-slate-300"></i>
+                        <p class="text-xs font-light">ไม่พบประวัติข้อมูลตามเงื่อนไขที่ค้นหา</p>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+
+            filteredData.forEach(item => {
+                const card = document.createElement('div');
+                card.className = "bg-white/95 backdrop-blur-sm p-4 rounded-xl shadow-sm border border-slate-200/60 space-y-3";
+                card.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="font-semibold text-slate-800 text-sm">${item.worker}</p>
+                            <p class="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                <i data-lucide="calendar-days" class="w-3 h-3"></i>
+                                ${item.timestamp}
+                            </p>
+                        </div>
+                        <span class="bg-cyan-50 text-cyan-700 border border-cyan-100 text-[11px] font-bold px-2.5 py-0.5 rounded-md whitespace-nowrap h-fit">
+                            ${item.area.toLocaleString()} ตร.ม.
+                        </span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3 pt-1">
+                        <img src="${item.photo}" class="w-full h-16 object-cover rounded-lg border border-slate-200" alt="หลักฐาน">
+                        <div class="col-span-2 text-[11px] text-slate-600 flex flex-col justify-between py-0.5">
+                            <p><span class="font-medium text-slate-400">พิกัด:</span> ${item.coordinates}</p>
+                            <p class="line-clamp-2"><span class="font-medium text-slate-400">บันทึก:</span> ${item.notes}</p>
+                        </div>
+                    </div>
+                `;
+                historyList.appendChild(card);
+            });
+            lucide.createIcons();
+        }
+
+        function generateSinglePDFReport() {
+            const filterWorker = document.getElementById('filter-worker').value;
+            const startDateStr = document.getElementById('filter-start-date').value;
+            const endDateStr = document.getElementById('filter-end-date').value;
+            
+            if (!filterWorker) {
+                showToast("⚠️ กรุณาระบุชื่อพนักงานเพื่อจัดทำเอกสารรายงาน");
+                return;
+            }
+
+            const workerTasks = getFilteredData(); // ใช้ฟังก์ชันส่วนกลาง
+
+            if (workerTasks.length === 0) {
+                showToast("⚠️ ไม่พบข้อมูลปฏิบัติงานตามช่วงวันที่เลือก");
+                return;
+            }
+
+            // จัดการข้อความวันที่บนหัวกระดาษ PDF
+            let pdfHeaderDateStr = "";
+            if (startDateStr && endDateStr) {
+                // แปลง Format ให้อ่านง่ายขึ้น
+                const sDate = new Date(startDateStr).toLocaleDateString('th-TH');
+                const eDate = new Date(endDateStr).toLocaleDateString('th-TH');
+                pdfHeaderDateStr = `ตั้งแต่วันที่ ${sDate} ถึง ${eDate}`;
+            } else if (startDateStr) {
+                pdfHeaderDateStr = `ตั้งแต่วันที่ ${new Date(startDateStr).toLocaleDateString('th-TH')} เป็นต้นไป`;
+            } else if (endDateStr) {
+                pdfHeaderDateStr = `ข้อมูลจนถึงวันที่ ${new Date(endDateStr).toLocaleDateString('th-TH')}`;
+            } else {
+                // ถ้าไม่เลือกวันที่เลย ให้แสดงคำว่า ประจำวันที่... (วันนี้)
+                pdfHeaderDateStr = `ประจำวันที่ ${new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}`;
+            }
+
+            document.getElementById('pdf-report-date').innerText = pdfHeaderDateStr;
+            document.getElementById('pdf-worker-name').innerText = filterWorker;
+            document.getElementById('pdf-sig-worker').innerText = `(${filterWorker})`;
+            document.getElementById('pdf-total-tasks').innerText = `${workerTasks.length} รายการ`;
+            
+            let totalArea = 0;
+            const tableBody = document.getElementById('pdf-table-body');
+            const imagesGrid = document.getElementById('pdf-images-grid');
+            
+            tableBody.innerHTML = "";
+            imagesGrid.innerHTML = "";
+
+            workerTasks.forEach((task, index) => {
+                totalArea += parseInt(task.area);
+
+                const row = document.createElement('tr');
+                row.className = "border-b border-slate-200";
+                
+                // ตัดเอาเฉพาะวันที่และเวลาแยกกันให้อ่านง่าย
+                let displayTime = task.timestamp;
+                if(task.timestamp.includes(" ")) {
+                    const parts = task.timestamp.split(" ");
+                    // แสดง วันที่<br>เวลา
+                    displayTime = `${parts[0]}<br><span class="text-slate-400">${parts[1]}</span>`;
+                }
+
+                row.innerHTML = `
+                    <td class="p-2 text-center font-medium">${index + 1}</td>
+                    <td class="p-2 text-slate-600 leading-tight">${displayTime}</td>
+                    <td class="p-2 font-mono text-slate-500 text-[10px]">${task.coordinates}</td>
+                    <td class="p-2 text-right font-bold text-slate-700">${task.area.toLocaleString()}</td>
+                    <td class="p-2 text-slate-500 text-[10px]">${task.notes}</td>
+                `;
+                tableBody.appendChild(row);
+
+                const imageContainer = document.createElement('div');
+                imageContainer.className = "border border-slate-200 p-2 rounded-lg text-center bg-slate-50";
+                imageContainer.innerHTML = `
+                    <img src="${task.photo}" class="w-full h-24 object-cover rounded-md mb-1" alt="รูปที่ ${index + 1}">
+                    <span class="text-[9px] font-medium text-slate-400">รูปจุดที่ ${index + 1}</span>
+                `;
+                imagesGrid.appendChild(imageContainer);
+            });
+
+            document.getElementById('pdf-total-area').innerText = totalArea.toLocaleString();
+            showToast("📄 สร้างเอกสารสำเร็จ! บราวเซอร์กำลังเริ่มดาวน์โหลด PDF...");
+
+            const opt = {
+                margin:       10,
+                filename:     `รายงานผลงาน_${filterWorker}.pdf`,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            const element = document.getElementById('pdf-report-content');
+            html2pdf().set(opt).from(element).save();
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('custom-toast');
+            document.getElementById('toast-message').innerText = message;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+    </script>
+</body>
+</html>
